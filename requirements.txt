@@ -1,0 +1,2 @@
+telethon>=1.36
+python-socks[asyncio]>=2.4

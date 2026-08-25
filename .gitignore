@@ -1,0 +1,25 @@
+# === Секреты и сессии — НИКОГДА не коммитить! ===
+config_gui.json
+*.session
+*.session-journal
+downloader_state.json
+dedup_index.json
+
+# === Скачанные файлы ===
+telegram_downloads/
+
+# === Python ===
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+
+# === PyInstaller ===
+build/
+dist/
+*.spec
+
+# === ОС ===
+.DS_Store
+Thumbs.db
