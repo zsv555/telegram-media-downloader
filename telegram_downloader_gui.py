@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Telegram Media Downloader v2.0 — GUI (tkinter + telethon)
+Telegram Media Downloader 2.1 — GUI (tkinter + telethon)
 
 - Очередь каналов: список, выбор одного/нескольких или все сразу
 - Фильтры по типам файлов, каждый тип — в свою подпапку
@@ -8,6 +8,7 @@ Telegram Media Downloader v2.0 — GUI (tkinter + telethon)
 - Фильтр по размеру файлов (мин/макс МБ)
 - Инкрементальная синхронизация (только новые сообщения)
 - Экспорт текста сообщений в JSONL + CSV (полный бэкап канала)
+- Сбор ссылок из сообщений: текст, гиперссылки, кнопки, превью (links.csv + links_unique.txt)
 - Дедупликация: быстрая по ID файла + точная по SHA-256
 - Прокси: SOCKS5 или MTProto
 """
@@ -23,10 +24,12 @@ import tkinter as tk
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from urllib.parse import urlparse
 
 from telethon import TelegramClient, errors, connection
 from telethon.tl.types import (
     MessageMediaWebPage,
+    MessageEntityTextUrl,
     DocumentAttributeVideo,
     DocumentAttributeAudio,
     DocumentAttributeSticker,
@@ -44,6 +47,7 @@ STATE_FILE = BASE_DIR / "downloader_state.json"
 DEDUP_NAME = "dedup_index.json"
 
 ARCHIVE_EXT = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"}
+URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+")
 
 CATEGORIES = [
     ("photo", "Фото"),
@@ -115,6 +119,47 @@ def classify_message(message):
     return "other"
 
 
+def extract_links(message):
+    """Все ссылки из сообщения: текст, скрытые гиперссылки, кнопки под постом, превью."""
+    found = {}  # url -> (anchor, source)
+    text = message.message or ""
+
+    # Видимые URL прямо в тексте
+    for m in URL_RE.finditer(text):
+        url = m.group(0).rstrip(".,;:!?)")
+        found.setdefault(url, ("", "text"))
+
+    # Скрытые гиперссылки (слово со ссылкой)
+    if message.entities:
+        for ent in message.entities:
+            if isinstance(ent, MessageEntityTextUrl) and ent.url:
+                anchor = ""
+                try:
+                    anchor = (text[ent.offset:ent.offset + ent.length] or "")[:80]
+                except Exception:
+                    pass
+                found.setdefault(ent.url, (anchor, "hyperlink"))
+
+    # Кнопки под постом (inline keyboard)
+    markup = getattr(message, "reply_markup", None)
+    if markup and hasattr(markup, "rows"):
+        for row in markup.rows:
+            for btn in row.buttons:
+                url = getattr(btn, "url", None)
+                if url:
+                    found.setdefault(url, (getattr(btn, "text", "") or "", "button"))
+
+    # Превью-карточка ссылки
+    media = message.media
+    if isinstance(media, MessageMediaWebPage):
+        wp = getattr(media, "webpage", None)
+        url = getattr(wp, "url", None)
+        if url:
+            found.setdefault(url, (getattr(wp, "title", "") or "", "preview"))
+
+    return [(url, anchor, src) for url, (anchor, src) in found.items()]
+
+
 def file_uid(message):
     if message.document:
         return f"doc:{message.document.id}"
@@ -134,9 +179,9 @@ def sha256_of(path, chunk=1024 * 1024):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Telegram Media Downloader 2.0")
-        self.geometry("860x980")
-        self.minsize(720, 820)
+        self.title("Telegram Media Downloader 2.1")
+        self.geometry("880x1000")
+        self.minsize(720, 840)
 
         self.events = queue.Queue()
         self.stop_event = threading.Event()
@@ -237,9 +282,11 @@ class App(tk.Tk):
         self.opt_incremental = tk.BooleanVar(value=False)
         self.opt_export = tk.BooleanVar(value=True)
         self.opt_dedup = tk.BooleanVar(value=True)
+        self.opt_links = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt, text="Только новые (инкрементально)", variable=self.opt_incremental).grid(row=0, column=0, sticky="w", padx=8)
-        ttk.Checkbutton(opt, text="Экспорт текста сообщений (JSONL+CSV)", variable=self.opt_export).grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Checkbutton(opt, text="Пропускать дубликаты (ID + SHA-256)", variable=self.opt_dedup).grid(row=0, column=2, sticky="w", padx=8)
+        ttk.Checkbutton(opt, text="Экспорт текста (JSONL+CSV)", variable=self.opt_export).grid(row=0, column=1, sticky="w", padx=8)
+        ttk.Checkbutton(opt, text="Пропускать дубликаты (SHA-256)", variable=self.opt_dedup).grid(row=0, column=2, sticky="w", padx=8)
+        ttk.Checkbutton(opt, text="Собирать ссылки (links.csv)", variable=self.opt_links).grid(row=1, column=0, sticky="w", padx=8)
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=8)
@@ -318,6 +365,7 @@ class App(tk.Tk):
         self.opt_incremental.set(bool(cfg.get("opt_incremental", False)))
         self.opt_export.set(bool(cfg.get("opt_export", True)))
         self.opt_dedup.set(bool(cfg.get("opt_dedup", True)))
+        self.opt_links.set(bool(cfg.get("opt_links", True)))
 
     def _save_config(self):
         cfg = {
@@ -343,6 +391,7 @@ class App(tk.Tk):
             "opt_incremental": self.opt_incremental.get(),
             "opt_export": self.opt_export.get(),
             "opt_dedup": self.opt_dedup.get(),
+            "opt_links": self.opt_links.get(),
         }
         CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -427,8 +476,9 @@ class App(tk.Tk):
         if not channels:
             messagebox.showerror("Ошибка", "Добавьте хотя бы один канал в список.", parent=self)
             return
-        if not any(v.get() for v in self.filter_vars.values()) and not self.opt_export.get():
-            messagebox.showerror("Ошибка", "Выберите типы файлов или включите экспорт текста.", parent=self)
+        if (not any(v.get() for v in self.filter_vars.values())
+                and not self.opt_export.get() and not self.opt_links.get()):
+            messagebox.showerror("Ошибка", "Включите хотя бы что-то одно: типы файлов, экспорт текста или сбор ссылок.", parent=self)
             return
 
         try:
@@ -470,6 +520,7 @@ class App(tk.Tk):
             "incremental": self.opt_incremental.get(),
             "export": self.opt_export.get(),
             "dedup": self.opt_dedup.get(),
+            "links": self.opt_links.get(),
         }
         self._save_config()
         self._load_state()
@@ -536,7 +587,7 @@ class App(tk.Tk):
         )
         self.events.put(("log", "Авторизация успешна."))
 
-        total = {"dl": 0, "skip": 0, "dup": 0, "fail": 0}
+        total = {"dl": 0, "skip": 0, "dup": 0, "fail": 0, "links": 0}
         try:
             for ch in st["channels"]:
                 if self.stop_event.is_set():
@@ -548,8 +599,8 @@ class App(tk.Tk):
             self._save_dedup(st["outdir"])
 
         self.events.put(("log",
-            f"ИТОГО по всем каналам: скачано {total['dl']}, пропущено {total['skip']}, "
-            f"дубликатов {total['dup']}, ошибок {total['fail']}."))
+            f"ИТОГО: скачано {total['dl']}, пропущено {total['skip']}, "
+            f"дубликатов {total['dup']}, ошибок {total['fail']}, ссылок собрано {total['links']}."))
         self.events.put(("status", "Завершено"))
 
     async def _download_channel(self, client, channel, st, total):
@@ -581,6 +632,10 @@ class App(tk.Tk):
         username = getattr(entity, "username", None)
         chan_key = str(getattr(entity, "id", channel))
 
+        def msg_link(mid):
+            return (f"https://t.me/{username}/{mid}" if username
+                    else f"https://t.me/c/{chan_key}/{mid}")
+
         # Экспорт текста
         fj = fc = writer = None
         if st["export"]:
@@ -593,6 +648,22 @@ class App(tk.Tk):
             if csv_new:
                 writer.writerow(["id", "date", "text", "category", "file", "link"])
 
+        # Сбор ссылок
+        fl = links_writer = None
+        links_set = set()
+        if st["links"]:
+            links_csv = base_dir / "links.csv"
+            links_new = not links_csv.exists()
+            fl = open(links_csv, "a", encoding="utf-8-sig", newline="")
+            links_writer = csv.writer(fl)
+            if links_new:
+                links_writer.writerow(
+                    ["message_id", "date", "domain", "url", "anchor", "source", "message_link"])
+            uniq_path = base_dir / "links_unique.txt"
+            if uniq_path.exists():
+                links_set.update(x.strip() for x in
+                                 uniq_path.read_text(encoding="utf-8").splitlines() if x.strip())
+
         # Параметры обхода
         iter_kwargs = {"reverse": True}
         if st["date_from"]:
@@ -602,7 +673,7 @@ class App(tk.Tk):
             iter_kwargs["min_id"] = last_id
             self.events.put(("log", f"  Инкрементально: только сообщения новее ID {last_id}"))
 
-        dl = skip = dup = fail = 0
+        dl = skip = dup = fail = new_links = 0
         try:
             async for message in client.iter_messages(entity, **iter_kwargs):
                 if self.stop_event.is_set():
@@ -617,9 +688,21 @@ class App(tk.Tk):
                 if message.id % 100 == 0:
                     self._save_state()
 
+                date_str = message.date.isoformat(timespec="seconds") if message.date else ""
                 category = classify_message(message)
                 saved_name = ""
 
+                # --- сбор ссылок (независимо от фильтров файлов) ---
+                if links_writer:
+                    for url, anchor, src in extract_links(message):
+                        links_writer.writerow([
+                            message.id, date_str, urlparse(url).netloc,
+                            url, anchor, src, msg_link(message.id)])
+                        if url not in links_set:
+                            links_set.add(url)
+                            new_links += 1
+
+                # --- скачивание медиа ---
                 if message.media and not isinstance(message.media, MessageMediaWebPage) and category:
                     if not st["filters"].get(category, False):
                         skip += 1
@@ -680,33 +763,33 @@ class App(tk.Tk):
                                     fail += 1
                                     self.events.put(("log", f"  [ERR] {message.id}: {exc}"))
 
+                # --- экспорт текста ---
                 if writer:
-                    link = (f"https://t.me/{username}/{message.id}" if username
-                            else f"https://t.me/c/{chan_key}/{message.id}")
-                    row = [message.id,
-                           message.date.isoformat(timespec="seconds") if message.date else "",
-                           message.message or "",
-                           category or "",
-                           saved_name,
-                           link]
+                    row = [message.id, date_str, message.message or "",
+                           category or "", saved_name, msg_link(message.id)]
                     writer.writerow(row)
                     fj.write(json.dumps({
                         "id": row[0], "date": row[1], "text": row[2],
                         "category": row[3], "file": row[4], "link": row[5],
                     }, ensure_ascii=False) + "\n")
         finally:
-            if fj:
-                fj.close()
-            if fc:
-                fc.close()
+            for fh in (fj, fc, fl):
+                if fh:
+                    fh.close()
+            if st["links"]:
+                (base_dir / "links_unique.txt").write_text(
+                    "\n".join(sorted(links_set)) + ("\n" if links_set else ""),
+                    encoding="utf-8")
             self._save_state()
 
         total["dl"] += dl
         total["skip"] += skip
         total["dup"] += dup
         total["fail"] += fail
+        total["links"] += new_links
         self.events.put(("log",
-            f"  Канал готов: скачано {dl}, пропущено {skip}, дубликатов {dup}, ошибок {fail}."))
+            f"  Канал готов: скачано {dl}, пропущено {skip}, дубликатов {dup}, "
+            f"ошибок {fail}, новых ссылок {new_links}."))
 
 
 if __name__ == "__main__":

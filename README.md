@@ -1,4 +1,4 @@
-# Telegram Media Downloader 2.0
+# Telegram Media Downloader 2.1
 
 [Русский](#-русский) · [English](#-english)
 
@@ -11,7 +11,7 @@ A GUI app to download media and make full backups of Telegram channels via your 
 
 ### О программе
 
-Программа с графическим интерфейсом (tkinter + [Telethon](https://github.com/LonamiWebs/Telethon)), которая скачивает файлы из Telegram-каналов через ваш обычный аккаунт и делает полный бэкап канала, включая текст сообщений.
+Программа с графическим интерфейсом (tkinter + [Telethon](https://github.com/LonamiWebs/Telethon)), которая скачивает файлы из Telegram-каналов через ваш обычный аккаунт и делает полный бэкап канала, включая текст сообщений и все ссылки.
 
 ### Возможности
 
@@ -21,6 +21,7 @@ A GUI app to download media and make full backups of Telegram channels via your 
 - **Фильтр по размеру** — минимальный и максимальный размер файла в МБ (размер известен до скачивания, трафик не тратится)
 - **Инкрементальная синхронизация** — при повторном запуске скачиваются только новые сообщения
 - **Экспорт текста сообщений** — `messages.jsonl` + `messages.csv`: ID, дата, текст, тип вложения, имя файла, ссылка на сообщение
+- **Сбор ссылок** — извлечение всех ссылок из текстов постов, скрытых гиперссылок, кнопок под постами и превью-карточек: `links.csv` + `links_unique.txt`
 - **Дедупликация** — двухуровневая: по ID файла (до скачивания) и по SHA-256 (после); дубликаты пропускаются или удаляются
 - **Прокси** — SOCKS5 (с логином/паролем) и MTProto (host/port/secret)
 - **Авторизация в окне** — код из Telegram и пароль 2FA запрашиваются в диалоговых окнах, консоль не нужна
@@ -71,6 +72,7 @@ python telegram_downloader_gui.py
 | Типы файлов | Галочки: что скачивать. Каждый тип — в свою подпапку |
 | Только новые | Инкрементальная синхронизация: докачивать лишь новые сообщения |
 | Экспорт текста | Писать `messages.jsonl` и `messages.csv` (полный бэкап текстов) |
+| Собирать ссылки | Извлекать все ссылки из сообщений в `links.csv` и `links_unique.txt` (работает независимо от фильтров файлов) |
 | Пропускать дубликаты | Дедупликация по ID файла и SHA-256 |
 | Прокси | SOCKS5: хост, порт, логин/пароль. MTProto: хост, порт, secret |
 
@@ -82,7 +84,9 @@ telegram_downloads/
     ├── Photo/  Video/  Voice_Audio/  Documents/
     ├── Archives/  GIF_Stickers/  Other/
     ├── messages.jsonl      # тексты сообщений (JSON Lines)
-    └── messages.csv        # то же в CSV (открывается в Excel)
+    ├── messages.csv        # то же в CSV (открывается в Excel)
+    ├── links.csv           # все ссылки: текст, кнопки, превью
+    └── links_unique.txt    # уникальные ссылки, по одной на строку
 ```
 
 ### Сборка в .exe (Windows)
@@ -127,7 +131,7 @@ pyinstaller --onefile --noconsole --name TelegramDownloader telegram_downloader_
 
 ### Overview
 
-A desktop GUI application (tkinter + [Telethon](https://github.com/LonamiWebs/Telethon)) that downloads media files from Telegram channels through your own account and creates a full channel backup, including message texts.
+A desktop GUI application (tkinter + [Telethon](https://github.com/LonamiWebs/Telethon)) that downloads media files from Telegram channels through your own account and creates a full channel backup, including message texts and all links.
 
 ### Features
 
@@ -137,6 +141,7 @@ A desktop GUI application (tkinter + [Telethon](https://github.com/LonamiWebs/Te
 - **Size filter** — min/max file size in MB (size is known before downloading, so no traffic is wasted)
 - **Incremental sync** — on subsequent runs only new messages are downloaded
 - **Message text export** — `messages.jsonl` + `messages.csv`: ID, date, text, media type, saved file name, message link
+- **Link harvesting** — extracts every link from post text, hidden hyperlinks, inline buttons and link previews: `links.csv` + `links_unique.txt`
 - **Deduplication** — two-level: by file ID (before download) and by SHA-256 (after); duplicates are skipped or removed
 - **Proxy support** — SOCKS5 (with auth) and MTProto (host/port/secret)
 - **In-app authorization** — the Telegram code and 2FA password are requested in dialog windows; no console needed
@@ -150,7 +155,7 @@ A desktop GUI application (tkinter + [Telethon](https://github.com/LonamiWebs/Te
 ### Installation
 
 ```bash
-git clone https://github.com/zsv555/telegram-media-downloader.git
+git clone https://github.com/YOUR_USERNAME/telegram-media-downloader.git
 cd telegram-media-downloader
 python -m pip install -r requirements.txt
 ```
@@ -183,6 +188,7 @@ On the first run the app will ask for the Telegram login code and your 2FA passw
 | File types | Checkboxes: what to download. Each type goes to its own subfolder |
 | Only new | Incremental sync: download only new messages |
 | Export text | Write `messages.jsonl` and `messages.csv` (full text backup) |
+| Collect links | Extract all links from messages into `links.csv` and `links_unique.txt` (works independently of file filters) |
 | Skip duplicates | Deduplication by file ID and SHA-256 |
 | Proxy | SOCKS5: host, port, login/password. MTProto: host, port, secret |
 
@@ -194,7 +200,9 @@ telegram_downloads/
     ├── Photo/  Video/  Voice_Audio/  Documents/
     ├── Archives/  GIF_Stickers/  Other/
     ├── messages.jsonl      # message texts (JSON Lines)
-    └── messages.csv        # same data as CSV (opens in Excel)
+    ├── messages.csv        # same data as CSV (opens in Excel)
+    ├── links.csv           # all links: text, buttons, previews
+    └── links_unique.txt    # unique links, one per line
 ```
 
 ### Building a Windows .exe
